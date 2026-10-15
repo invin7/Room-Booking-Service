@@ -29,7 +29,7 @@ Topics: java, spring-boot, concurrency, postgresql, rest-api
 | `/rooms` | GET | Get all rooms |
 | `/rooms` | POST | Create a new room |
 | `/rooms/{id}/availability` | GET | Get free slots for a room on a given date (query param: `date=YYYY-MM-DD`) |
-| `/bookings` | POST | Book a slot (query params: `roomId`, `startTime` (ISO format), `userId`) |
+| `/bookings` | POST | Book a slot (expects JSON with `roomId`, `startTime` (ISO format), `userId`) |
 | `/bookings/{id}` | DELETE | Cancel a booking by setting its status to CANCELLED |
 | `/users/{userId}/bookings` | GET | Get all bookings for a user |
 
