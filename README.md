@@ -88,14 +88,6 @@ The tests use Testcontainers, which requires Docker to be running.
 2. Run `mvn test`.
 3. The tests will start a PostgreSQL container, run the application against it, and verify the behavior, including a concurrency test that simulates 50 simultaneous booking requests to ensure only one succeeds.
 
-## What the System Doesn't Handle Yet
-
-- **Timezones**: All times are stored as OffsetDateTime (with timezone information). The service expects and returns times in ISO 8601 format with offset. It is recommended to use UTC (offset +00:00) for consistency.
-- **Recurring Bookings**: The system currently only supports one-time bookings.
-- **Multi-region Deployments**: The service is designed to run in a single region. For multi-region, you would need to consider replication and conflict resolution strategies.
-- **Slot Duration Flexibility**: The slot duration is hardcoded to 1 hour. In a more flexible system, the duration could be configurable per room or per slot.
-- **Authentication and Authorization**: The system does not include any authentication or authorization; the `userId` is taken at face value.
-- **Payment Integration**: The system does not handle payments or pricing.
 
 ## License
 
