@@ -1,10 +1,10 @@
 package com.example.roombooking.controller;
 
+import com.example.roombooking.dto.BookingRequest;
 import com.example.roombooking.exception.BookingConflictException;
 import com.example.roombooking.model.Booking;
 import com.example.roombooking.service.BookingService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -20,16 +20,13 @@ public class BookingController {
 
     /**
      * Book a slot for a user.
-     * Expects JSON with roomId, startTime (ISO format), and userId.
+     * Expects a JSON request body with roomId, startTime (ISO format), and userId.
      * Returns 201 on success, 409 if slot is already booked, 400 for invalid input.
      */
     @PostMapping
-    public ResponseEntity<Booking> createBooking(
-            @RequestParam Long roomId,
-            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime startTime,
-            @RequestParam String userId) {
+    public ResponseEntity<Booking> createBooking(@RequestBody BookingRequest request) {
         try {
-            Booking booking = bookingService.bookSlot(roomId, startTime, userId);
+            Booking booking = bookingService.bookSlot(request.getRoomId(), request.getStartTime(), request.getUserId());
             return ResponseEntity.ok(booking);
         } catch (IllegalArgumentException e) {
             // Validation errors (room not found, start time in past, etc.)

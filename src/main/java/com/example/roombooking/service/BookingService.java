@@ -11,8 +11,11 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Propagation;
 
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -61,15 +64,17 @@ public class BookingService {
         }
 
         // We consider the day starting at 00:00 of the given date
-        LocalDateTime startOfDay = date.toLocalDate().atStartOfDay();
-        LocalDateTime endOfDay = startOfDay.plusDays(1);
+        // Convert to OffsetDateTime using the system's default timezone
+        ZoneId zone = ZoneId.systemDefault();
+        OffsetDateTime startOfDay = date.atZone(zone).toOffsetDateTime();
+        OffsetDateTime endOfDay = startOfDay.plusDays(1);
 
         List<Slot> availableSlots = new ArrayList<>();
 
         // Generate slot time ranges for the day
-        LocalDateTime currentStart = startOfDay;
+        OffsetDateTime currentStart = startOfDay;
         while (currentStart.isBefore(endOfDay)) {
-            LocalDateTime currentEnd = currentStart.plusHours(SLOT_DURATION_HOURS);
+            OffsetDateTime currentEnd = currentStart.plusHours(SLOT_DURATION_HOURS);
             if (currentEnd.isAfter(endOfDay)) {
                 currentEnd = endOfDay;
             }
@@ -99,7 +104,7 @@ public class BookingService {
      * and throw a BookingConflictException.
      */
     @Transactional
-    public Booking bookSlot(Long roomId, LocalDateTime startTime, String userId) {
+    public Booking bookSlot(Long roomId, OffsetDateTime startTime, String userId) {
         // Validate inputs
         if (roomId == null) {
             throw new IllegalArgumentException("Room ID must not be null");
@@ -112,7 +117,7 @@ public class BookingService {
         }
 
         // Validate start time is not in the past
-        if (startTime.isBefore(LocalDateTime.now())) {
+        if (startTime.isBefore(OffsetDateTime.now())) {
             throw new IllegalArgumentException("Start time must not be in the past");
         }
 
@@ -121,7 +126,7 @@ public class BookingService {
                 .orElseThrow(() -> new IllegalArgumentException("Room not found"));
 
         // Compute end time
-        LocalDateTime endTime = startTime.plusHours(SLOT_DURATION_HOURS);
+        OffsetDateTime endTime = startTime.plusHours(SLOT_DURATION_HOURS);
 
         // Find or create slot
         Slot slot = findOrCreateSlot(room, startTime, endTime);
@@ -138,7 +143,7 @@ public class BookingService {
                 .slot(slot)
                 .userId(userId)
                 .status("CONFIRMED")
-                .createdAt(LocalDateTime.now())
+                .createdAt(OffsetDateTime.now())
                 .build();
 
         try {
@@ -181,9 +186,10 @@ public class BookingService {
     /**
      * Find a slot by room and time range, or create it if it doesn't exist.
      * This method is used to ensure that the slot exists in the database.
+     * Uses a new transaction to handle concurrent creation attempts.
      */
-    @Transactional
-    public Slot findOrCreateSlot(Room room, LocalDateTime startTime, LocalDateTime endTime) {
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public Slot findOrCreateSlot(Room room, OffsetDateTime startTime, OffsetDateTime endTime) {
         // Validate inputs
         if (room == null) {
             throw new IllegalArgumentException("Room must not be null");
@@ -195,19 +201,41 @@ public class BookingService {
             throw new IllegalArgumentException("Start time must be before end time");
         }
 
-        // Try to find an existing slot
-        Optional<Slot> existingSlot = slotRepository.findByRoomIdAndStartTimeAndEndTime(room, startTime, endTime);
-        if (existingSlot.isPresent()) {
-            return existingSlot.get();
+        int maxAttempts = 3;
+        DataIntegrityViolationException lastException = null;
+        for (int attempt = 0; attempt < maxAttempts; attempt++) {
+            // Try to find an existing slot
+            Optional<Slot> existingSlot = slotRepository.findByRoomIdAndStartTimeAndEndTime(room, startTime, endTime);
+            if (existingSlot.isPresent()) {
+                return existingSlot.get();
+            }
+
+            // Slot not found, try to create it
+            Slot slot = Slot.builder()
+                    .room(room)
+                    .startTime(startTime)
+                    .endTime(endTime)
+                    .build();
+
+            try {
+                return slotRepository.save(slot);
+            } catch (DataIntegrityViolationException e) {
+                lastException = e;
+                // If this is the last attempt, we break out to try to find one more time.
+                if (attempt == maxAttempts - 1) {
+                    break;
+                }
+                // Otherwise, continue the loop (which will try to find again)
+            }
         }
 
-        // Create a new slot
-        Slot slot = Slot.builder()
-                .room(room)
-                .startTime(startTime)
-                .endTime(endTime)
-                .build();
-
-        return slotRepository.save(slot);
+        // After exhausting creation attempts, try to find one more time.
+        Optional<Slot> slotAfterConflict = slotRepository.findByRoomIdAndStartTimeAndEndTime(room, startTime, endTime);
+        if (slotAfterConflict.isPresent()) {
+            return slotAfterConflict.get();
+        } else {
+            // This should not happen, but if it does, we throw the last exception.
+            throw new IllegalStateException("Slot not found after attempting to create", lastException);
+        }
     }
 }

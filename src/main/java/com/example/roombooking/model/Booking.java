@@ -2,7 +2,7 @@ package com.example.roombooking.model;
 
 import jakarta.persistence.*;
 import lombok.*;
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 
 @Entity
 @Table(name = "booking")
@@ -32,5 +32,5 @@ public class Booking {
     private String status; // CONFIRMED or CANCELLED
 
     @Column(name = "created_at", nullable = false, updatable = false)
-    private LocalDateTime createdAt;
+    private OffsetDateTime createdAt;
 }
