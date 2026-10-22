@@ -1,12 +1,14 @@
 package com.example.roombooking.advice;
 
 import com.example.roombooking.exception.BookingConflictException;
+import com.example.roombooking.exception.ResourceNotFoundException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 
 @RestControllerAdvice
 @Slf4j
@@ -32,6 +34,20 @@ public class ControllerAdvice {
         return ResponseEntity.status(HttpStatus.CONFLICT).body(error);
     }
 
+    @ExceptionHandler(ResourceNotFoundException.class)
+    public ResponseEntity<ErrorResponse> handleNotFound(ResourceNotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ErrorResponse.builder().message(ex.getMessage()).status(HttpStatus.NOT_FOUND.value()).build());
+    }
+
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ResponseEntity<ErrorResponse> handleValidation(MethodArgumentNotValidException ex) {
+        String message = ex.getBindingResult().getFieldErrors().stream().findFirst()
+                .map(error -> error.getField() + " " + error.getDefaultMessage()).orElse("Invalid request");
+        return ResponseEntity.badRequest()
+                .body(ErrorResponse.builder().message(message).status(HttpStatus.BAD_REQUEST.value()).build());
+    }
+
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)
     public ResponseEntity<ErrorResponse> handleMethodArgumentTypeMismatch(MethodArgumentTypeMismatchException ex) {
         String message = String.format("Invalid parameter: %s", ex.getMessage());
@@ -40,7 +56,7 @@ public class ControllerAdvice {
                 .message(message)
                 .status(HttpStatus.BAD_REQUEST.value())
                 .build();
-        return ResponseEntity.badRequest().build();
+        return ResponseEntity.badRequest().body(error);
     }
 
     @ExceptionHandler(Exception.class)

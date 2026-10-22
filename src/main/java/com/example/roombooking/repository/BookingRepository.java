@@ -2,6 +2,7 @@ package com.example.roombooking.repository;
 
 import com.example.roombooking.model.Booking;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -10,5 +11,7 @@ import java.util.Optional;
 @Repository
 public interface BookingRepository extends JpaRepository<Booking, Long> {
     Optional<Booking> findByRoomIdAndSlotIdAndStatus(Long roomId, Long slotId, String status);
+    @EntityGraph(attributePaths = {"room", "slot"})
     List<Booking> findByUserId(String userId);
+    boolean existsBySlotIdAndStatus(Long slotId, String status);
 }

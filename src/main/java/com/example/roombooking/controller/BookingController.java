@@ -1,14 +1,13 @@
 package com.example.roombooking.controller;
 
 import com.example.roombooking.dto.BookingRequest;
-import com.example.roombooking.exception.BookingConflictException;
-import com.example.roombooking.model.Booking;
+import com.example.roombooking.dto.BookingResponse;
 import com.example.roombooking.service.BookingService;
 import lombok.RequiredArgsConstructor;
+import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.time.LocalDateTime;
 import java.util.List;
 
 @RestController
@@ -24,17 +23,10 @@ public class BookingController {
      * Returns 201 on success, 409 if slot is already booked, 400 for invalid input.
      */
     @PostMapping
-    public ResponseEntity<Booking> createBooking(@RequestBody BookingRequest request) {
-        try {
-            Booking booking = bookingService.bookSlot(request.getRoomId(), request.getStartTime(), request.getUserId());
-            return ResponseEntity.ok(booking);
-        } catch (IllegalArgumentException e) {
-            // Validation errors (room not found, start time in past, etc.)
-            return ResponseEntity.badRequest().build();
-        } catch (BookingConflictException e) {
-            // Slot already booked
-            return ResponseEntity.status(409).build();
-        }
+    public ResponseEntity<BookingResponse> createBooking(@Valid @RequestBody BookingRequest request) {
+        BookingResponse booking = BookingResponse.from(
+                bookingService.bookSlot(request.getRoomId(), request.getStartTime(), request.getUserId()));
+        return ResponseEntity.status(201).body(booking);
     }
 
     /**
@@ -44,24 +36,17 @@ public class BookingController {
      */
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> cancelBooking(@PathVariable Long id) {
-        try {
-            bookingService.cancelBooking(id);
-            return ResponseEntity.noContent().build();
-        } catch (IllegalArgumentException e) {
-            // Booking not found or not confirmed
-            return ResponseEntity.badRequest().build();
-        }
+        bookingService.cancelBooking(id);
+        return ResponseEntity.noContent().build();
     }
 
     /**
      * Get all bookings for a user.
      */
     @GetMapping("/users/{userId}")
-    public ResponseEntity<List<Booking>> getBookingsByUser(@PathVariable String userId) {
-        if (userId == null || userId.isBlank()) {
-            return ResponseEntity.badRequest().build();
-        }
-        List<Booking> bookings = bookingService.getBookingsByUser(userId);
+    public ResponseEntity<List<BookingResponse>> getBookingsByUser(@PathVariable String userId) {
+        List<BookingResponse> bookings = bookingService.getBookingsByUser(userId).stream()
+                .map(BookingResponse::from).toList();
         return ResponseEntity.ok(bookings);
     }
 }

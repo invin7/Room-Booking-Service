@@ -1,6 +1,9 @@
 package com.example.roombooking.service;
 
+import com.example.roombooking.dto.RoomRequest;
+import com.example.roombooking.dto.SlotResponse;
 import com.example.roombooking.exception.BookingConflictException;
+import com.example.roombooking.exception.ResourceNotFoundException;
 import com.example.roombooking.model.Booking;
 import com.example.roombooking.model.Room;
 import com.example.roombooking.model.Slot;
@@ -11,231 +14,100 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.annotation.Propagation;
 
-import java.time.LocalDateTime;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
-import java.time.ZoneId;
-import java.util.ArrayList;
+import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
-import java.util.Objects;
-import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
 public class BookingService {
-
+    private static final String CONFIRMED = "CONFIRMED";
+    private static final String CANCELLED = "CANCELLED";
     private final RoomRepository roomRepository;
     private final SlotRepository slotRepository;
     private final BookingRepository bookingRepository;
 
-    private static final int SLOT_DURATION_HOURS = 1;
-
-    /**
-     * Get all rooms.
-     */
     @Transactional(readOnly = true)
-    public List<Room> getAllRooms() {
-        return roomRepository.findAll();
-    }
+    public List<Room> getAllRooms() { return roomRepository.findAll(); }
 
-    /**
-     * Save a room.
-     */
     @Transactional
-    public Room saveRoom(Room room) {
-        return roomRepository.save(room);
+    public Room saveRoom(RoomRequest request) {
+        return roomRepository.save(Room.builder().name(request.name().trim()).capacity(request.capacity()).build());
     }
 
-    /**
-     * Get available slots for a room on a given date.
-     * We consider a slot available if there is no confirmed booking for that slot.
-     * We generate slots for the day from 00:00 to 23:59 with a fixed duration.
-     */
+    /** Returns canonical UTC hourly slots without creating rows during a read. */
     @Transactional(readOnly = true)
-    public List<Slot> getAvailableSlots(Long roomId, LocalDateTime date) {
-        // Validate room exists
-        Room room = roomRepository.findById(roomId)
-                .orElseThrow(() -> new IllegalArgumentException("Room not found"));
-
-        // Validate date is not null
-        if (date == null) {
-            throw new IllegalArgumentException("Date must not be null");
-        }
-
-        // We consider the day starting at 00:00 of the given date
-        // Convert to OffsetDateTime using the system's default timezone
-        ZoneId zone = ZoneId.systemDefault();
-        OffsetDateTime startOfDay = date.atZone(zone).toOffsetDateTime();
-        OffsetDateTime endOfDay = startOfDay.plusDays(1);
-
-        List<Slot> availableSlots = new ArrayList<>();
-
-        // Generate slot time ranges for the day
-        OffsetDateTime currentStart = startOfDay;
-        while (currentStart.isBefore(endOfDay)) {
-            OffsetDateTime currentEnd = currentStart.plusHours(SLOT_DURATION_HOURS);
-            if (currentEnd.isAfter(endOfDay)) {
-                currentEnd = endOfDay;
-            }
-
-            // Find or create slot for this time range
-            Slot slot = findOrCreateSlot(room, currentStart, currentEnd);
-
-            // Check if slot is free (no confirmed booking)
-            Optional<Booking> existingBooking = bookingRepository.findByRoomIdAndSlotIdAndStatus(room.getId(), slot.getId(), "CONFIRMED");
-            if (!existingBooking.isPresent()) {
-                availableSlots.add(slot);
-            }
-
-            currentStart = currentEnd;
-        }
-
-        return availableSlots;
+    public List<SlotResponse> getAvailableSlots(Long roomId, LocalDate date) {
+        requireRoom(roomId);
+        if (date == null) throw new IllegalArgumentException("date is required");
+        OffsetDateTime startOfDay = date.atStartOfDay().atOffset(ZoneOffset.UTC);
+        return java.util.stream.IntStream.range(0, 24)
+                .mapToObj(hour -> new TimeRange(startOfDay.plusHours(hour), startOfDay.plusHours(hour + 1)))
+                .filter(range -> isAvailable(roomId, range.start(), range.end()))
+                .map(range -> new SlotResponse(range.start(), range.end())).toList();
     }
 
-    /**
-     * Book a slot for a user.
-     * We take roomId, start time, and userId.
-     * We compute the end time as start time plus SLOT_DURATION_HOURS.
-     * We validate the room exists and the start time is not in the past.
-     * We find or create a slot for the room and time range.
-     * We then attempt to create a booking. If a concurrent booking happens, we catch the DataIntegrityViolationException
-     * and throw a BookingConflictException.
-     */
     @Transactional
     public Booking bookSlot(Long roomId, OffsetDateTime startTime, String userId) {
-        // Validate inputs
-        if (roomId == null) {
-            throw new IllegalArgumentException("Room ID must not be null");
+        if (roomId == null || startTime == null || userId == null || userId.isBlank()) {
+            throw new IllegalArgumentException("roomId, startTime, and userId are required");
         }
-        if (startTime == null) {
-            throw new IllegalArgumentException("Start time must not be null");
+        OffsetDateTime suppliedUtc = startTime.withOffsetSameInstant(ZoneOffset.UTC);
+        OffsetDateTime canonicalStart = suppliedUtc.truncatedTo(ChronoUnit.HOURS);
+        if (!canonicalStart.equals(suppliedUtc)) {
+            throw new IllegalArgumentException("startTime must begin exactly on an hourly UTC boundary");
         }
-        if (userId == null || userId.isBlank()) {
-            throw new IllegalArgumentException("User ID must not be blank");
+        if (!canonicalStart.isAfter(OffsetDateTime.now(ZoneOffset.UTC))) {
+            throw new IllegalArgumentException("startTime must be in the future");
         }
-
-        // Validate start time is not in the past
-        if (startTime.isBefore(OffsetDateTime.now())) {
-            throw new IllegalArgumentException("Start time must not be in the past");
-        }
-
-        // Validate room exists
-        Room room = roomRepository.findById(roomId)
-                .orElseThrow(() -> new IllegalArgumentException("Room not found"));
-
-        // Compute end time
-        OffsetDateTime endTime = startTime.plusHours(SLOT_DURATION_HOURS);
-
-        // Find or create slot
-        Slot slot = findOrCreateSlot(room, startTime, endTime);
-
-        // Check if slot is already booked (service-level check, though we rely on DB constraint for concurrency safety)
-        Optional<Booking> existingBooking = bookingRepository.findByRoomIdAndSlotIdAndStatus(room.getId(), slot.getId(), "CONFIRMED");
-        if (existingBooking.isPresent()) {
+        Room room = requireRoom(roomId);
+        Slot slot = findOrCreateSlot(room, canonicalStart, canonicalStart.plusHours(1));
+        if (bookingRepository.existsBySlotIdAndStatus(slot.getId(), CONFIRMED)) {
             throw new BookingConflictException("Slot is already booked");
         }
-
-        // Create booking
-        Booking booking = Booking.builder()
-                .room(room)
-                .slot(slot)
-                .userId(userId)
-                .status("CONFIRMED")
-                .createdAt(OffsetDateTime.now())
-                .build();
-
         try {
-            return bookingRepository.save(booking);
-        } catch (DataIntegrityViolationException e) {
-            // This can happen due to the unique index on (room_id, slot_id) where status = 'CONFIRMED'
-            // if two requests try to book the same slot concurrently.
+            return bookingRepository.saveAndFlush(Booking.builder().room(room).slot(slot)
+                    .userId(userId.trim()).status(CONFIRMED)
+                    .createdAt(OffsetDateTime.now(ZoneOffset.UTC)).build());
+        } catch (DataIntegrityViolationException exception) {
             throw new BookingConflictException("Slot is already booked");
         }
     }
 
-    /**
-     * Cancel a booking by setting its status to CANCELLED.
-     * We do not delete the booking row.
-     */
     @Transactional
     public void cancelBooking(Long bookingId) {
         Booking booking = bookingRepository.findById(bookingId)
-                .orElseThrow(() -> new IllegalArgumentException("Booking not found"));
-
-        if (!"CONFIRMED".equals(booking.getStatus())) {
+                .orElseThrow(() -> new ResourceNotFoundException("Booking not found"));
+        if (!CONFIRMED.equals(booking.getStatus())) {
             throw new IllegalArgumentException("Only confirmed bookings can be cancelled");
         }
-
-        booking.setStatus("CANCELLED");
-        bookingRepository.save(booking);
+        booking.setStatus(CANCELLED);
     }
 
-    /**
-     * Get bookings for a user.
-     */
     @Transactional(readOnly = true)
     public List<Booking> getBookingsByUser(String userId) {
-        if (userId == null || userId.isBlank()) {
-            throw new IllegalArgumentException("User ID must not be blank");
-        }
-        return bookingRepository.findByUserId(userId);
+        if (userId == null || userId.isBlank()) throw new IllegalArgumentException("userId is required");
+        return bookingRepository.findByUserId(userId.trim());
     }
 
-    /**
-     * Find a slot by room and time range, or create it if it doesn't exist.
-     * This method is used to ensure that the slot exists in the database.
-     * Uses a new transaction to handle concurrent creation attempts.
-     */
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public Slot findOrCreateSlot(Room room, OffsetDateTime startTime, OffsetDateTime endTime) {
-        // Validate inputs
-        if (room == null) {
-            throw new IllegalArgumentException("Room must not be null");
-        }
-        if (startTime == null || endTime == null) {
-            throw new IllegalArgumentException("Start and end times must not be null");
-        }
-        if (startTime.isAfter(endTime) || startTime.isEqual(endTime)) {
-            throw new IllegalArgumentException("Start time must be before end time");
-        }
-
-        int maxAttempts = 3;
-        DataIntegrityViolationException lastException = null;
-        for (int attempt = 0; attempt < maxAttempts; attempt++) {
-            // Try to find an existing slot
-            Optional<Slot> existingSlot = slotRepository.findByRoomIdAndStartTimeAndEndTime(room, startTime, endTime);
-            if (existingSlot.isPresent()) {
-                return existingSlot.get();
-            }
-
-            // Slot not found, try to create it
-            Slot slot = Slot.builder()
-                    .room(room)
-                    .startTime(startTime)
-                    .endTime(endTime)
-                    .build();
-
-            try {
-                return slotRepository.save(slot);
-            } catch (DataIntegrityViolationException e) {
-                lastException = e;
-                // If this is the last attempt, we break out to try to find one more time.
-                if (attempt == maxAttempts - 1) {
-                    break;
-                }
-                // Otherwise, continue the loop (which will try to find again)
-            }
-        }
-
-        // After exhausting creation attempts, try to find one more time.
-        Optional<Slot> slotAfterConflict = slotRepository.findByRoomIdAndStartTimeAndEndTime(room, startTime, endTime);
-        if (slotAfterConflict.isPresent()) {
-            return slotAfterConflict.get();
-        } else {
-            // This should not happen, but if it does, we throw the last exception.
-            throw new IllegalStateException("Slot not found after attempting to create", lastException);
-        }
+    private boolean isAvailable(Long roomId, OffsetDateTime start, OffsetDateTime end) {
+        return slotRepository.findByRoomAndStartTimeAndEndTime(requireRoom(roomId), start, end)
+                .map(slot -> !bookingRepository.existsBySlotIdAndStatus(slot.getId(), CONFIRMED)).orElse(true);
     }
+
+    private Slot findOrCreateSlot(Room room, OffsetDateTime start, OffsetDateTime end) {
+        slotRepository.insertIfAbsent(room.getId(), start, end);
+        return slotRepository.findByRoomAndStartTimeAndEndTime(room, start, end)
+                .orElseThrow(() -> new IllegalStateException("Slot was not created"));
+    }
+
+    private Room requireRoom(Long roomId) {
+        if (roomId == null) throw new IllegalArgumentException("roomId is required");
+        return roomRepository.findById(roomId).orElseThrow(() -> new ResourceNotFoundException("Room not found"));
+    }
+
+    private record TimeRange(OffsetDateTime start, OffsetDateTime end) { }
 }

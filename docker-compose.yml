@@ -30,12 +30,5 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/roombooking
       SPRING_DATASOURCE_USERNAME: test
       SPRING_DATASOURCE_PASSWORD: test
-    # Optional: add a healthcheck for the app
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-
 volumes:
   postgres_data:

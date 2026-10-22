@@ -9,8 +9,8 @@ CREATE TABLE room (
 CREATE TABLE slot (
     id SERIAL PRIMARY KEY,
     room_id INTEGER NOT NULL REFERENCES room(id) ON DELETE CASCADE,
-    start_time TIMESTAMP NOT NULL,
-    end_time TIMESTAMP NOT NULL,
+    start_time TIMESTAMP WITH TIME ZONE NOT NULL,
+    end_time TIMESTAMP WITH TIME ZONE NOT NULL,
     UNIQUE (room_id, start_time, end_time)
 );
 
@@ -21,7 +21,7 @@ CREATE TABLE booking (
     slot_id INTEGER NOT NULL REFERENCES slot(id) ON DELETE CASCADE,
     user_id VARCHAR(255) NOT NULL,
     status VARCHAR(50) NOT NULL CHECK (status IN ('CONFIRMED', 'CANCELLED')),
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Create a unique partial index to ensure only one confirmed booking per slot
