@@ -6,3 +6,4 @@ target/
 .idea/
 *.iws
 .DS_Store
+potential_upgrades.md

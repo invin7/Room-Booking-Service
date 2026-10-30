@@ -25,11 +25,13 @@ public class Booking {
     @JoinColumn(name = "slot_id", nullable = false)
     private Slot slot;
 
-    @Column(name = "user_id", nullable = false)
-    private String userId;
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "user_id", nullable = false)
+    private AppUser user;
 
+    @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false)
-    private String status; // CONFIRMED or CANCELLED
+    private BookingStatus status;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;

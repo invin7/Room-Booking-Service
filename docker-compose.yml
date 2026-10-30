@@ -30,5 +30,11 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/roombooking
       SPRING_DATASOURCE_USERNAME: test
       SPRING_DATASOURCE_PASSWORD: test
+      # Demo defaults. Change the admin password, and set a real APP_JWT_SECRET (32+ chars),
+      # before exposing this anywhere. Without a secret, logins are reset on every restart.
+      APP_ADMIN_EMAIL: ${APP_ADMIN_EMAIL:-admin@example.com}
+      APP_ADMIN_PASSWORD: ${APP_ADMIN_PASSWORD:-admin12345}
+      APP_JWT_SECRET: ${APP_JWT_SECRET:-}
+      APP_SEED_DEMO_ROOMS: ${APP_SEED_DEMO_ROOMS:-true}
 volumes:
   postgres_data:
